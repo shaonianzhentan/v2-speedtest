@@ -45,14 +45,15 @@ async function run() {
 
     const nodeStats = new Map();
     allNodes.forEach(node => {
-        nodeStats.set(node.name, { totalDelay: 0, successCount: 0, proxy: node });
+        // 增加 totalSpeed 用于统计
+        nodeStats.set(node.name, { totalDelay: 0, totalSpeed: 0, successCount: 0, proxy: node });
     });
 
-    console.log(`\n🕵️ 开始稳定性压测（仅保留 ${TEST_ROUNDS}/${TEST_ROUNDS} 全通节点）...`);
+    console.log(`\n🕵️ 开始稳定性与速度压测（仅保留 ${TEST_ROUNDS}/${TEST_ROUNDS} 全通节点）...`);
 
     for (let round = 1; round <= TEST_ROUNDS; round++) {
-        let finishedInRound = 0; // 当前轮次完成的数量
-        let currentIndex = 0;   // 当前分发的索引
+        let finishedInRound = 0; 
+        let currentIndex = 0;   
 
         console.log(`\n━━━━━━━━━━━━ 第 ${round} / ${TEST_ROUNDS} 轮测试 ━━━━━━━━━━━━`);
 
@@ -68,14 +69,13 @@ async function run() {
                     if (res.success) {
                         stats.successCount += 1;
                         stats.totalDelay += res.delay;
+                        stats.totalSpeed += (res.speed || 0); // 累加速度
                     }
                 } catch (e) {}
 
-                // 实时进度显示
                 finishedInRound++;
                 const percent = ((finishedInRound / allNodes.length) * 100).toFixed(1);
-                // 使用 \r 让光标回到行首，实现原地刷新进度
-                process.stdout.write(`\r[进度] 第 ${round} 轮: ${percent}% (${finishedInRound}/${allNodes.length}) | 正在扫描: ${node.name}`);
+                process.stdout.write(`\r[进度] 第 ${round} 轮: ${percent}% (${finishedInRound}/${allNodes.length}) | 正在扫描: ${node.name}          `);
             }
         }
 
@@ -84,20 +84,26 @@ async function run() {
         process.stdout.write(`\n✅ 第 ${round} 轮测试完毕\n`);
     }
 
-    // 3. 严格筛选：successRate 必须为 1
+    // 3. 严格筛选与数据平均化
     const finalResults = [];
     nodeStats.forEach((stats) => {
         if (stats.successCount === TEST_ROUNDS) {
             finalResults.push({
                 ...stats.proxy,
                 success: true,
-                delay: Math.round(stats.totalDelay / TEST_ROUNDS)
+                delay: Math.round(stats.totalDelay / TEST_ROUNDS),
+                speed: parseFloat((stats.totalSpeed / TEST_ROUNDS).toFixed(2)) // 计算平均速度
             });
         }
     });
 
-    // 4. 排序
-    const sorted = finalResults.sort((a, b) => a.delay - b.delay);
+    // 4. 排序：速度优先（降序），延迟次之（升序）
+    const sorted = finalResults.sort((a, b) => {
+        if (b.speed !== a.speed) {
+            return b.speed - a.speed; // 速度大的排前面
+        }
+        return a.delay - b.delay; // 速度一样则延迟小的排前面
+    });
 
     if (sorted.length === 0) {
         console.error(`\n❌ 筛选失败：在 ${TEST_ROUNDS} 轮测试中没有 100% 稳定的节点。`);
@@ -108,9 +114,15 @@ async function run() {
     const OUTPUT_FILE = output(sorted);
 
     console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    console.log(`🎊 测试完成！`);
+    console.log(`🎊 测试完成！已按【速度优先】排序`);
     console.log(`原始节点总数: ${allNodes.length}`);
     console.log(`100% 稳定节点: ${sorted.length}`);
+    console.log(`----------------------------------`);
+    console.log(`Top 5 最快稳节点:`);
+    sorted.slice(0, 5).forEach((n, idx) => {
+        console.log(`${idx + 1}. ${n.name.padEnd(25)} | 速度: ${n.speed} MB/s | 延迟: ${n.delay}ms`);
+    });
+    console.log(`----------------------------------`);
     console.log(`结果文件路径: ${OUTPUT_FILE}`);
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
